@@ -1,0 +1,7 @@
+#!/bin/sh
+# Strip AI attribution trailers from every commit message (works on macOS and Linux).
+tmp="$1.tmp"
+grep -viE '^(Co-Authored-By:.*(anthropic|claude)|Claude-Session:|.*Generated with \[?Claude Code)' "$1" > "$tmp" || true
+# drop trailing blank lines left behind
+sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$tmp" > "$1"
+rm -f "$tmp"

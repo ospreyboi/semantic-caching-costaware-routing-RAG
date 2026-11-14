@@ -1,0 +1,240 @@
+"""Source of truth for the eval set. Writes eval/eval_set.jsonl and verifies every
+`evidence` string appears verbatim in its `source_doc`, so each reference answer is grounded.
+
+Run:  python eval/build_eval_set.py
+"""
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DOCS = ROOT / "data" / "docs"
+
+# category: lookup = one fact in one place; howto = needs a procedure/code;
+#           conceptual = why/explain; unanswerable = not in the corpus (should say "I don't know")
+Q = [
+    # --- Request data ---------------------------------------------------------------
+    ("q001", "lookup", "What happens to function parameters that are not part of the path in a FastAPI endpoint?",
+     "Function parameters that aren't path parameters are automatically interpreted as query parameters.",
+     "tutorial/query-params.md", "they are automatically interpreted as \"query\" parameters"),
+    ("q002", "howto", "How can I hide a query parameter from the generated OpenAPI docs?",
+     "Set include_in_schema=False on the Query(...) for that parameter.",
+     "tutorial/query-params-str-validations.md", "set the parameter `include_in_schema` of `Query` to `False`"),
+    ("q003", "howto", "How do I mark a query parameter as deprecated in the docs?",
+     "Pass deprecated=True to Query(...).",
+     "tutorial/query-params-str-validations.md", "pass the parameter `deprecated=True` to `Query`"),
+    ("q004", "howto", "How do I restrict a path parameter to a fixed set of allowed values?",
+     "Create an Enum class (e.g. a StrEnum subclass) and use it as the path parameter's type annotation.",
+     "tutorial/path-params.md", "you can use a standard Python <abbr title=\"Enumeration\">`Enum`</abbr>"),
+    ("q005", "howto", "How can a path parameter capture a full file path containing slashes?",
+     "Declare the route like /files/{file_path:path}; the :path suffix makes the parameter match any path.",
+     "tutorial/path-params.md", "the last part, `:path`, tells it that the parameter should match any *path*"),
+    ("q006", "lookup", "What does ge=1 mean on a numeric path parameter?",
+     "The value must be greater than or equal to 1.",
+     "tutorial/path-params-numeric-validations.md", "will need to be an integer number \"`g`reater than or `e`qual\" to `1`"),
+    ("q007", "lookup", "How does FastAPI map Python parameter names to HTTP header names?",
+     "Header converts underscores in the parameter name to hyphens; disable with convert_underscores=False.",
+     "tutorial/header-params.md", "convert the parameter names characters from underscore (`_`) to hyphen (`-`)"),
+    ("q008", "conceptual", "Why might it be a bad idea to turn off underscore-to-hyphen conversion for headers?",
+     "Some HTTP proxies and servers disallow headers that contain underscores.",
+     "tutorial/header-params.md", "some HTTP proxies and servers disallow the usage of headers with underscores"),
+    ("q009", "howto", "I have a single Pydantic body parameter but want the JSON to be wrapped under a key named after it. How?",
+     "Use Body(embed=True), e.g. item: Annotated[Item, Body(embed=True)].",
+     "tutorial/body-multiple-params.md", "Body(embed=True)"),
+    ("q010", "lookup", "What package must be installed to receive form data?",
+     "python-multipart.",
+     "tutorial/request-forms.md", "first install [`python-multipart`]"),
+    ("q011", "lookup", "In the OAuth2 password flow, what must the login fields be named and how must they be sent?",
+     "They must be named exactly username and password, sent as form fields, not JSON.",
+     "tutorial/request-forms.md", "exactly named `username` and `password`, and to be sent as form fields, not JSON"),
+    ("q012", "conceptual", "What is the advantage of UploadFile over bytes for file uploads?",
+     "UploadFile uses a spooled file (kept in memory up to a limit, then on disk) and exposes a SpooledTemporaryFile you can pass to other libraries, so large files don't use all memory.",
+     "tutorial/request-files.md", "It uses a \"spooled\" file"),
+    ("q013", "lookup", "How do I declare a cookie parameter?",
+     "Import Cookie and declare it the same way as Query and Path parameters.",
+     "tutorial/cookie-params.md", "You can define Cookie parameters the same way you define `Query` and `Path` parameters."),
+    # --- Responses -------------------------------------------------------------------
+    ("q014", "howto", "How do I return only the fields that were explicitly set, omitting defaults, in the response?",
+     "Set response_model_exclude_unset=True on the path operation decorator.",
+     "tutorial/response-model.md", "`response_model_exclude_unset=True`"),
+    ("q015", "lookup", "What is special about the 204 status code?",
+     "204 means No Content: the response must not have a body.",
+     "tutorial/response-status-code.md", "A special case is `204`, \"No Content\""),
+    ("q016", "lookup", "What does jsonable_encoder do with a datetime?",
+     "It converts it to a str in ISO format so it is JSON-compatible.",
+     "tutorial/encoder.md", "a `datetime` object would have to be converted to a `str` containing the data in [ISO format]"),
+    ("q017", "conceptual", "Is it faster to return a JSONResponse directly or to use a response model?",
+     "Using a response model is normally much faster because Pydantic serializes the data in Rust.",
+     "advanced/response-directly.md", "You will normally have much better performance using a [Response Model]"),
+    ("q018", "lookup", "What response format does FastAPI use by default?",
+     "JSON.",
+     "advanced/custom-response.md", "By default, **FastAPI** will return JSON responses."),
+    ("q019", "howto", "How do I stream Server-Sent Events from an endpoint?",
+     "Use yield in the path operation function and set response_class=EventSourceResponse (imported from fastapi.sse).",
+     "tutorial/server-sent-events.md", "set `response_class=EventSourceResponse`"),
+    ("q020", "lookup", "What format do the docs suggest for streaming a sequence of JSON objects?",
+     "JSON Lines.",
+     "tutorial/stream-json-lines.md", "you could do it with **JSON Lines**"),
+    ("q021", "howto", "How do I partially update an item?",
+     "Use the HTTP PATCH operation (typically with exclude_unset so only sent fields are updated).",
+     "tutorial/body-updates.md", "operation to *partially* update data"),
+    # --- Errors ----------------------------------------------------------------------
+    ("q022", "conceptual", "Should I return or raise HTTPException, and why?",
+     "Raise it: it's a Python exception, so raising it also stops the rest of the path operation, even from inside a utility function.",
+     "tutorial/handling-errors.md", "Because it's a Python exception, you don't `return` it, you `raise` it."),
+    ("q023", "howto", "How do I customize the response FastAPI sends when request validation fails?",
+     "Register a handler with @app.exception_handler(RequestValidationError).",
+     "tutorial/handling-errors.md", "use it with `@app.exception_handler(RequestValidationError)`"),
+    # --- Dependencies ----------------------------------------------------------------
+    ("q024", "howto", "How do I run cleanup code (like closing a DB session) after a request finishes, using dependencies?",
+     "Use a dependency with yield instead of return and put the cleanup after the yield.",
+     "tutorial/dependencies/dependencies-with-yield.md", "use `yield` instead of `return`, and write the extra steps (code) after"),
+    ("q025", "howto", "How can I make a parameterized dependency using a class instance?",
+     "Define a class with a __call__ method; FastAPI calls __call__ and checks its parameters for sub-dependencies.",
+     "advanced/advanced-dependencies.md", "To do that, we declare a method `__call__`"),
+    ("q026", "howto", "How do I replace a dependency with a mock during tests?",
+     "Use app.dependency_overrides, a dict mapping the original dependency to the override; reset it to {} afterwards.",
+     "advanced/testing-dependencies.md", "has an attribute `app.dependency_overrides`, it is a simple `dict`"),
+    # --- Security --------------------------------------------------------------------
+    ("q027", "lookup", "What does the tokenUrl parameter of OAuth2PasswordBearer specify?",
+     "The URL the client uses to send username and password to get a token (e.g. tokenUrl=\"token\", a relative URL).",
+     "tutorial/security/first-steps.md", "we pass in the `tokenUrl` parameter"),
+    ("q028", "lookup", "Which library do the docs use for password hashing in the JWT tutorial?",
+     "pwdlib, with Argon2.",
+     "tutorial/security/oauth2-jwt.md", "Add `pwdlib` with Argon2 to your project"),
+    ("q029", "howto", "How do I generate a secret key for signing JWTs?",
+     "Run: openssl rand -hex 32",
+     "tutorial/security/oauth2-jwt.md", "openssl rand -hex 32"),
+    ("q030", "lookup", "Which algorithm is used to sign the JWT in the tutorial?",
+     "HS256.",
+     "tutorial/security/oauth2-jwt.md", "set it to `\"HS256\"`"),
+    ("q031", "lookup", "What fields should the token endpoint return according to the OAuth2 spec?",
+     "A JSON with access_token and token_type (\"bearer\").",
+     "tutorial/security/simple-oauth2.md", "you should return a JSON with an `access_token` and a `token_type`"),
+    ("q032", "lookup", "Does OAuth2PasswordRequestForm enforce grant_type=password?",
+     "No. The spec requires it, but OAuth2PasswordRequestForm doesn't enforce it.",
+     "tutorial/security/simple-oauth2.md", "but `OAuth2PasswordRequestForm` doesn't enforce it"),
+    ("q033", "conceptual", "For HTTP Basic auth, why compare credentials with secrets.compare_digest?",
+     "To check username/password safely (constant-time comparison against timing attacks) using the standard secrets module.",
+     "advanced/security/http-basic-auth.md", "use the Python standard module [`secrets`]"),
+    ("q034", "lookup", "What class lets a dependency read the scopes required by the endpoints that use it?",
+     "SecurityScopes from fastapi.security.",
+     "advanced/security/oauth2-scopes.md", "We also declare a special parameter of type `SecurityScopes`"),
+    ("q035", "lookup", "What restriction applies to CORS wildcards when allow_credentials is True?",
+     "allow_origins, allow_methods and allow_headers can't be ['*']; they must be explicitly specified.",
+     "tutorial/cors.md", "can be set to `['*']` if `allow_credentials` is set to `True`"),
+    # --- Data / DB -------------------------------------------------------------------
+    ("q036", "conceptual", "Why does the SQL tutorial pass check_same_thread=False to SQLite?",
+     "So FastAPI can use the same SQLite database in different threads, since a single request may use more than one thread.",
+     "tutorial/sql-databases.md", "Using `check_same_thread=False` allows FastAPI to use the same SQLite database in different threads"),
+    ("q037", "lookup", "Which library does the SQL databases tutorial use?",
+     "SQLModel.",
+     "tutorial/sql-databases.md", "SQLModel"),
+    ("q038", "howto", "How do I create the DB user model with a hashed password from the input model?",
+     "UserInDB(**user_in.model_dump(), hashed_password=hashed_password).",
+     "tutorial/extra-models.md", "UserInDB(**user_in.model_dump(), hashed_password=hashed_password)"),
+    # --- App structure / config ------------------------------------------------------
+    ("q039", "howto", "How do I split path operations across multiple files?",
+     "Use APIRouter in each module and include the routers in the main app (optionally with a prefix like /items).",
+     "tutorial/bigger-applications.md", "You can create the *path operations* for that module using `APIRouter`."),
+    ("q040", "lookup", "Can an APIRouter prefix end with a slash?",
+     "No, the prefix must not include a final /.",
+     "tutorial/bigger-applications.md", "the prefix must not include a final `/`"),
+    ("q041", "howto", "How do I avoid re-reading settings from the .env file on every request?",
+     "Wrap the get_settings function with @lru_cache so Settings is created only once.",
+     "advanced/settings.md", "the `Settings` object will be created only once"),
+    ("q042", "howto", "How do I add metadata/descriptions for tags in the docs?",
+     "Pass a list of tag metadata dicts to the openapi_tags parameter of FastAPI.",
+     "tutorial/metadata.md", "with the parameter `openapi_tags`"),
+    ("q043", "howto", "How can I disable OpenAPI and the docs in production via configuration?",
+     "Make openapi_url a setting (default \"/openapi.json\") and set the OPENAPI_URL env var to an empty string.",
+     "how-to/conditional-openapi.md", "setting the environment variable `OPENAPI_URL` to the empty string"),
+    ("q044", "howto", "How do I run startup and shutdown logic for the app?",
+     "Use the lifespan parameter with an async context manager; code before yield runs at startup, after yield at shutdown. (startup/shutdown events are deprecated.)",
+     "advanced/events.md", "## Lifespan"),
+    ("q045", "howto", "How do I serve a Flask app inside FastAPI?",
+     "Wrap it with WSGIMiddleware (imported from a2wsgi) and mount it.",
+     "advanced/wsgi.md", "You need to import `WSGIMiddleware` from `a2wsgi`."),
+    ("q046", "lookup", "What is the default minimum_size for GZipMiddleware?",
+     "500 bytes.",
+     "advanced/middleware.md", "Defaults to `500`"),
+    ("q047", "howto", "How do I add a header with the request processing time?",
+     "Write an HTTP middleware that measures time with time.perf_counter() and sets a custom X-Process-Time header.",
+     "tutorial/middleware.md", "custom header `X-Process-Time`"),
+    ("q048", "lookup", "What is root_path used for?",
+     "Handling apps served behind a proxy with a path prefix; it's an ASGI-spec mechanism.",
+     "advanced/behind-a-proxy.md", "The `root_path` is a mechanism provided by the ASGI specification"),
+    ("q049", "howto", "How do I have two independent FastAPI apps each with their own docs?",
+     "Mount a sub-application on the main app.",
+     "advanced/sub-applications.md", "you can have a main app and \"mount\" one (or more) sub-application(s)"),
+    ("q050", "lookup", "Is Content-Type checking strict by default for JSON bodies, and how do I relax it?",
+     "Yes, JSON requests must include a valid Content-Type; set strict_content_type=False to disable.",
+     "advanced/strict-content-type.md", "setting `strict_content_type=False`"),
+    # --- Testing ---------------------------------------------------------------------
+    ("q051", "lookup", "What package do I need to install to use TestClient?",
+     "httpx.",
+     "tutorial/testing.md", "To use `TestClient`, first install [`httpx`]"),
+    ("q052", "howto", "How do I write async test functions for a FastAPI app?",
+     "Mark them with @pytest.mark.anyio and use httpx AsyncClient with await.",
+     "advanced/async-tests.md", "The marker `@pytest.mark.anyio` tells pytest"),
+    ("q053", "lookup", "Does AsyncClient trigger lifespan events in tests?",
+     "No; use LifespanManager from asgi-lifespan to trigger them.",
+     "advanced/async-tests.md", "the `AsyncClient` won't trigger these events"),
+    # --- WebSockets ------------------------------------------------------------------
+    ("q054", "lookup", "What exception is raised when a WebSocket client disconnects?",
+     "WebSocketDisconnect, raised by await websocket.receive_text().",
+     "advanced/websockets.md", "will raise a `WebSocketDisconnect` exception"),
+    # --- Deployment ------------------------------------------------------------------
+    ("q055", "lookup", "What's the difference between fastapi dev and fastapi run?",
+     "fastapi dev enables auto-reload (development); fastapi run disables it and listens on 0.0.0.0 for production.",
+     "fastapi-cli.md", "For production you would use `fastapi run` instead of `fastapi dev`."),
+    ("q056", "howto", "How do I start multiple worker processes?",
+     "Use the --workers option, e.g. fastapi run --workers 4 main.py.",
+     "deployment/server-workers.md", "You can start multiple workers with the `--workers` command line option"),
+    ("q057", "conceptual", "How can one server with a single IP serve HTTPS for multiple domains?",
+     "Via the SNI extension to TLS, which allows several certificates on one IP.",
+     "deployment/https.md", "allows one single server (with a **single IP address**) to have **several HTTPS certificates**"),
+    ("q058", "howto", "What should I do with the FastAPI version in my requirements?",
+     "Pin it to the specific latest version you know works, e.g. fastapi>=0.45.0,<0.46.0.",
+     "deployment/versions.md", "The first thing you should do is to \"pin\" the version"),
+    ("q059", "lookup", "What CMD does the official Docker example use to start the app?",
+     "CMD [\"fastapi\", \"run\", \"app/main.py\", \"--port\", \"80\"]",
+     "deployment/docker.md", "CMD [\"fastapi\", \"run\", \"app/main.py\", \"--port\", \"80\"]"),
+    ("q060", "conceptual", "When should I use something like Celery instead of BackgroundTasks?",
+     "For heavy background computation that doesn't need to run in the same process (no shared memory/variables).",
+     "tutorial/background-tasks.md", "you might benefit from using other bigger tools like [Celery]"),
+    ("q061", "lookup", "Which tool do the docs recommend for managing a FastAPI project's dependencies and virtual environment?",
+     "uv.",
+     "virtual-environments.md", "I recommend using [uv]"),
+    ("q062", "conceptual", "Why use time.perf_counter() rather than time.time() for timing requests?",
+     "It can be more precise for these use cases.",
+     "tutorial/middleware.md", "instead of `time.time()` because it can be more precise"),
+    # --- Unanswerable (not in the corpus) --------------------------------------------
+    ("q063", "unanswerable", "How do I configure FastAPI to use a MongoDB replica set with read preferences?",
+     "I don't know (not covered by the docs).", None, None),
+    ("q064", "unanswerable", "What is the monthly price of FastAPI Cloud's enterprise plan?",
+     "I don't know (not covered by the docs).", None, None),
+    ("q065", "unanswerable", "How do I deploy a FastAPI app to Heroku using a Procfile?",
+     "I don't know (not covered by the docs).", None, None),
+]
+
+
+def main() -> int:
+    bad = 0
+    out = ROOT / "eval" / "eval_set.jsonl"
+    with out.open("w", encoding="utf-8") as f:
+        for qid, cat, question, ref, src, evidence in Q:
+            if src is not None:
+                path = DOCS / src
+                if not path.exists():
+                    print(f"[{qid}] missing source doc: {src}"); bad += 1
+                elif evidence not in path.read_text(encoding="utf-8"):
+                    print(f"[{qid}] evidence not found in {src}: {evidence!r}"); bad += 1
+            f.write(json.dumps({"id": qid, "category": cat, "question": question,
+                                "reference_answer": ref, "source_doc": src, "evidence": evidence}) + "\n")
+    print(f"Wrote {len(Q)} questions to {out.relative_to(ROOT)}; {bad} failed verification")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

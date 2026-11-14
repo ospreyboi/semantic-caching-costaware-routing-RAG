@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+qdrant_data/
+# per-question CSVs are noisy; summary.csv and the baseline run are committed on purpose
+results/*.csv
+!results/summary.csv
+!results/*_baseline.csv
