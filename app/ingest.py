@@ -96,6 +96,7 @@ def ingest() -> int:
     n_docs = len({c.doc_id for c in chunks})
     print(f"Ingested {len(chunks)} chunks from {n_docs} docs into '{config.COLLECTION}' "
           f"(corpus_version={config.CORPUS_VERSION})")
+    client.close()
     return len(chunks)
 
 

@@ -54,7 +54,7 @@ def generate(query: str, chunks: list[dict], model: str = config.LLM_MODEL) -> d
     ]
     response = litellm.completion(
         model=model, messages=messages, temperature=0, max_tokens=config.MAX_ANSWER_TOKENS,
-        num_retries=3,
+        num_retries=3, timeout=60,
     )
     answer = (response.choices[0].message.content or "").strip()
     usage = response.usage

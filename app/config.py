@@ -23,12 +23,14 @@ COLLECTION = os.getenv("COLLECTION", "docs")
 TOP_K = int(os.getenv("TOP_K", 5))
 
 # LLMs (any LiteLLM model string: "gemini/gemini-2.5-flash", "gpt-4o-mini", "groq/llama-3.1-8b-instant", ...)
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
+LLM_MODEL = os.getenv("LLM_MODEL", "groq/openai/gpt-oss-120b")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", LLM_MODEL)
-MAX_ANSWER_TOKENS = int(os.getenv("MAX_ANSWER_TOKENS", 600))
+MAX_ANSWER_TOKENS = int(os.getenv("MAX_ANSWER_TOKENS", 2000))
 
 # Fallback price table (USD per 1M tokens) used when LiteLLM doesn't know a model's price.
 PRICES = {
+    "groq/openai/gpt-oss-120b": {"in": 0.15, "out": 0.60},
+    "groq/openai/gpt-oss-20b": {"in": 0.075, "out": 0.30},
     "gemini/gemini-2.5-flash": {"in": 0.30, "out": 2.50},
     "gemini/gemini-2.5-flash-lite": {"in": 0.10, "out": 0.40},
     "gpt-4o-mini": {"in": 0.15, "out": 0.60},

@@ -59,7 +59,7 @@ def judge(question: str, reference: str, bot_answer: str) -> tuple[float, str]:
         model=config.JUDGE_MODEL,
         messages=[{"role": "user", "content": JUDGE_PROMPT.format(
             question=question, reference=reference, answer=bot_answer)}],
-        temperature=0, max_tokens=200, num_retries=3,
+        temperature=0, max_tokens=1000, num_retries=3, timeout=60,
     )
     text = (resp.choices[0].message.content or "").strip()
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
