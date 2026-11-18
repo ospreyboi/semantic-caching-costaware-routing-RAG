@@ -54,6 +54,20 @@ SUMMARY_FIELDS = [
 GRADE_SCORE = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
 
 
+def with_backoff(fn, *args, max_tries=30, **kwargs):
+    """Retry on provider rate limits, sleeping as long as the provider asks (capped at 65s)."""
+    import re
+    for attempt in range(1, max_tries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except litellm.RateLimitError as e:
+            m = re.search(r"try again in ([0-9.]+)s", str(e))
+            wait = min(65.0, float(m.group(1)) + 1 if m else 20.0)
+            print(f"   rate limited (attempt {attempt}/{max_tries}), sleeping {wait:.0f}s")
+            time.sleep(wait)
+    return fn(*args, **kwargs)
+
+
 def judge(question: str, reference: str, bot_answer: str) -> tuple[float, str]:
     resp = litellm.completion(
         model=config.JUDGE_MODEL,
@@ -112,11 +126,11 @@ def main() -> None:
             row = {"latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
         else:
             t_call = time.perf_counter()
-            res = answer(it["question"], k=args.k)
+            res = with_backoff(answer, it["question"], k=args.k)
             docs = [r["doc_id"] for r in res["retrieved"]]
             if gap:
                 time.sleep(max(0.0, gap - (time.perf_counter() - t_call)))
-            score, reason = judge(it["question"], it["reference_answer"], res["answer"])
+            score, reason = with_backoff(judge, it["question"], it["reference_answer"], res["answer"])
             if gap:
                 time.sleep(gap)
             row = {
